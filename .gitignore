@@ -1,0 +1,18 @@
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets and environment variables
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+.vscode/
