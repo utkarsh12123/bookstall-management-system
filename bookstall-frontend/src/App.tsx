@@ -1,15 +1,13 @@
 
 import { useEffect, useState } from 'react'
 import './App.css'
+const API_BASE_URL = 'http://127.0.0.1:8000'
 
 type Book = {
   id: number
   title: string
   price: number
-  stock: number
 }
-
-type LocationStock = Record<string, number>
 
 type StockTransfer = {
   id: number
@@ -21,24 +19,34 @@ type StockTransfer = {
   date: string
 }
 
-const LOCATIONS = [
-  'Foundation Office',
-  "Members' Bags",
-  'Bookstalls',
-]
+type ApiBook = {
+  id: number
+  title: string
+  author: string | null
+  price: number | null
+  active: boolean
+}
+
+
+type ApiInventoryRow = {
+  book_id: number
+  title: string
+  location_id: number
+  location_name: string
+  current_stock: number
+}
+
+type ApiLocation = {
+  id: number
+  name: string
+  type: string
+  member_id: number | null
+  member_name: string | null
+  active: boolean
+}
+
 
 const LOW_STOCK_LIMIT = 10
-
-const sampleBooks: Book[] = [
-  { id: 1, title: 'संगति', price: 210, stock: 45 },
-  { id: 2, title: 'मन', price: 190, stock: 32 },
-  { id: 3, title: 'उत्कृष्टता', price: 210, stock: 28 },
-  { id: 4, title: 'लिखनी हैं नई कहानी', price: 210, stock: 24 },
-  { id: 5, title: 'प्रेम', price: 210, stock: 36 },
-  { id: 6, title: 'सफलता', price: 190, stock: 41 },
-  { id: 7, title: 'जीवन प्रबंधन', price: 180, stock: 20 },
-  { id: 8, title: 'आत्म-विकास', price: 200, stock: 18 },
-]
 
 const menuItems = [
   { name: 'Dashboard', icon: '▦' },
@@ -50,18 +58,6 @@ const menuItems = [
   { name: 'Reports', icon: '▥' },
 ]
 
-function readStoredData<T>(key: string, fallback: T): T {
-  const saved = localStorage.getItem(key)
-
-  if (!saved) return fallback
-
-  try {
-    return JSON.parse(saved) as T
-  } catch {
-    return fallback
-  }
-}
-
 function App() {
   const [activePage, setActivePage] = useState('Dashboard')
   const [search, setSearch] = useState('')
@@ -72,200 +68,252 @@ function App() {
   const [editingBook, setEditingBook] = useState<Book | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [newPrice, setNewPrice] = useState('')
-  const [newStock, setNewStock] = useState('')
 
-  const [books, setBooks] = useState<Book[]>(() =>
-    readStoredData<Book[]>('bookstall-books', sampleBooks),
-  )
+  const [books, setBooks] = useState<Book[]>([])
+  const [booksLoading, setBooksLoading] = useState(true)
+  const [booksError, setBooksError] = useState('')
 
-  // Existing stock is assigned to Foundation Office on first use.
-  const [locationStock, setLocationStock] = useState<
-    Record<number, LocationStock>
-  >(() => {
-    const saved = readStoredData<Record<number, LocationStock> | null>(
-      'bookstall-location-stock',
-      null,
-    )
 
-    if (saved) return saved
+  const [inventoryRows, setInventoryRows] = useState<ApiInventoryRow[]>([])
+  const [locations, setLocations] = useState<ApiLocation[]>([])
+  const [inventoryLoading, setInventoryLoading] = useState(true)
+  const [inventoryError, setInventoryError] = useState('')
 
-    const currentBooks = readStoredData<Book[]>(
-      'bookstall-books',
-      sampleBooks,
-    )
 
-    return Object.fromEntries(
-      currentBooks.map((book) => [
-        book.id,
-        {
-          'Foundation Office': book.stock,
-          "Members' Bags": 0,
-          Bookstalls: 0,
-        },
-      ]),
-    )
-  })
+  const [transfers, setTransfers] = useState<StockTransfer[]>([])
 
-  const [transfers, setTransfers] = useState<StockTransfer[]>(() =>
-    readStoredData<StockTransfer[]>('bookstall-transfers', []),
-  )
+  const [transfersLoading, setTransfersLoading] = useState(true)
+  const [transfersError, setTransfersError] = useState('')
+
+  useEffect(() => {
+    async function loadTransfers() {
+      try {
+        setTransfersLoading(true)
+        setTransfersError('')
+
+        const response = await fetch(`${API_BASE_URL}/transfers`)
+
+        if (!response.ok) {
+          throw new Error('Failed to load transfer history.')
+        }
+
+        const data: { transfers: StockTransfer[] } =
+          await response.json()
+
+        setTransfers(data.transfers)
+      } catch (error) {
+        setTransfersError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load transfer history.',
+        )
+      } finally {
+        setTransfersLoading(false)
+      }
+    }
+
+    loadTransfers()
+  }, [])
 
   const [transferBookId, setTransferBookId] = useState('')
-  const [transferSource, setTransferSource] = useState(LOCATIONS[0])
-  const [transferDestination, setTransferDestination] = useState(LOCATIONS[1])
+  const [transferSource, setTransferSource] = useState('1')
+  const [transferDestination, setTransferDestination] = useState('2')
   const [transferQuantity, setTransferQuantity] = useState('')
 
-  useEffect(() => {
-    localStorage.setItem('bookstall-books', JSON.stringify(books))
-  }, [books])
 
-  useEffect(() => {
-    localStorage.setItem(
-      'bookstall-location-stock',
-      JSON.stringify(locationStock),
+useEffect(() => {
+  const loadBooks = async () => {
+    try {
+      setBooksLoading(true)
+      setBooksError('')
+
+      const response = await fetch(`${API_BASE_URL}/books`)
+
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`)
+      }
+
+      const data: { books: ApiBook[] } = await response.json()
+
+      setBooks(
+        data.books.map((book) => ({
+          id: book.id,
+          title: book.title,
+          price: book.price ?? 0,
+          stock: 0,
+        })),
+      )
+    } catch (error) {
+      setBooksError(
+        error instanceof Error ? error.message : 'Unable to load books.',
+      )
+    } finally {
+      setBooksLoading(false)
+    }
+  }
+
+  void loadBooks()
+}, [])
+
+
+useEffect(() => {
+  const loadInventory = async () => {
+    try {
+      setInventoryLoading(true)
+      setInventoryError('')
+
+      const [inventoryResponse, locationsResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/inventory`),
+        fetch(`${API_BASE_URL}/locations`),
+      ])
+
+      if (!inventoryResponse.ok || !locationsResponse.ok) {
+        throw new Error('Failed to load inventory or locations.')
+      }
+
+      const inventoryData: { inventory: ApiInventoryRow[] } =
+        await inventoryResponse.json()
+
+      const locationsData: { locations: ApiLocation[] } =
+        await locationsResponse.json()
+
+      setInventoryRows(inventoryData.inventory)
+      setLocations(
+        locationsData.locations.filter((location) => location.active),
+      )
+    } catch (error) {
+      setInventoryError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load inventory.',
+      )
+    } finally {
+      setInventoryLoading(false)
+    }
+  }
+
+  void loadInventory()
+}, [])
+
+
+  const getLocationQuantity = (bookId: number, locationId: number) =>
+  inventoryRows.find(
+    (row) =>
+      row.book_id === bookId &&
+      row.location_id === locationId,
+  )?.current_stock ?? 0
+
+  const availableForTransfer = transferBookId
+  ? getLocationQuantity(
+      Number(transferBookId),
+      Number(transferSource),
     )
-  }, [locationStock])
-
-  useEffect(() => {
-    localStorage.setItem('bookstall-transfers', JSON.stringify(transfers))
-  }, [transfers])
-
-  // Keep each book's total stock in sync with stock at all locations.
-  const totalAtLocations = (stock: LocationStock | undefined) =>
-    LOCATIONS.reduce((total, location) => total + (stock?.[location] ?? 0), 0)
-
-  const getLocationQuantity = (bookId: number, location: string) =>
-    locationStock[bookId]?.[location] ?? 0
+  : 0
 
   const resetForm = () => {
     setNewTitle('')
     setNewPrice('')
-    setNewStock('')
     setShowAddBook(false)
     setEditingBook(null)
   }
 
-  const handleAddBook = () => {
-    if (!newTitle.trim() || newPrice === '' || newStock === '') {
-      alert('Please fill in all three fields.')
+  const refreshBooksFromApi = async () => {
+    const response = await fetch(`${API_BASE_URL}/books`)
+    if (!response.ok) {
+      throw new Error('Book changes were saved, but the catalogue could not be refreshed. Refresh the page.')
+    }
+    const data: { books: ApiBook[] } = await response.json()
+    setBooks(data.books.map((book) => ({
+      id: book.id,
+      title: book.title,
+      price: book.price ?? 0,
+    })))
+  }
+
+  const handleAddBook = async () => {
+    if (!newTitle.trim() || newPrice === '') {
+      alert('Please enter a book title and price.')
       return
     }
 
     const price = Number(newPrice)
-    const stock = Number(newStock)
-
-    if (
-      !Number.isFinite(price) ||
-      !Number.isFinite(stock) ||
-      price <= 0 ||
-      stock < 0 ||
-      !Number.isInteger(stock)
-    ) {
-      alert('Enter a valid price and a whole-number stock quantity.')
+    if (!Number.isFinite(price) || price <= 0) {
+      alert('Enter a valid price greater than zero.')
       return
     }
 
-    const newBook: Book = {
-      id: Date.now(),
-      title: newTitle.trim(),
-      price,
-      stock,
+    try {
+      const response = await fetch(`${API_BASE_URL}/books`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle.trim(), price }),
+      })
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.detail ?? 'The book could not be saved.')
+      }
+      await refreshBooksFromApi()
+      resetForm()
+      alert('Book saved to the database. Record initial stock separately when stock-receipt functionality is available.')
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to save the book.')
     }
-
-    setBooks((current) => [...current, newBook])
-
-    setLocationStock((current) => ({
-      ...current,
-      [newBook.id]: {
-        'Foundation Office': stock,
-        "Members' Bags": 0,
-        Bookstalls: 0,
-      },
-    }))
-
-    resetForm()
   }
 
   const handleEditClick = (book: Book) => {
     setEditingBook(book)
     setNewTitle(book.title)
     setNewPrice(String(book.price))
-    setNewStock(String(book.stock))
     setShowAddBook(false)
   }
 
-  const handleUpdateBook = () => {
-    if (!editingBook || !newTitle.trim() || newPrice === '' || newStock === '') {
-      alert('Please fill in all three fields.')
+  const handleUpdateBook = async () => {
+    if (!editingBook || !newTitle.trim() || newPrice === '') {
+      alert('Please enter a book title and price.')
       return
     }
 
     const price = Number(newPrice)
-    const stock = Number(newStock)
-
-    if (
-      !Number.isFinite(price) ||
-      !Number.isFinite(stock) ||
-      price <= 0 ||
-      stock < 0 ||
-      !Number.isInteger(stock)
-    ) {
-      alert('Enter a valid price and a whole-number stock quantity.')
+    if (!Number.isFinite(price) || price <= 0) {
+      alert('Enter a valid price greater than zero.')
       return
     }
 
-    const existingLocationTotal = totalAtLocations(
-      locationStock[editingBook.id],
-    )
-
-    // A stock edit adjusts the Foundation Office quantity by the difference.
-    // This prevents editing a book from silently erasing stock elsewhere.
-    const difference = stock - existingLocationTotal
-    const officeStock = getLocationQuantity(
-      editingBook.id,
-      'Foundation Office',
-    )
-
-    if (officeStock + difference < 0) {
-      alert(
-        'The new total is too low to preserve stock already assigned elsewhere.',
-      )
-      return
+    try {
+      const response = await fetch(`${API_BASE_URL}/books/${editingBook.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle.trim(), price }),
+      })
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.detail ?? 'The book could not be updated.')
+      }
+      await refreshBooksFromApi()
+      resetForm()
+      alert('Book details updated in the database.')
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to update the book.')
     }
-
-    setLocationStock((current) => ({
-      ...current,
-      [editingBook.id]: {
-        ...(current[editingBook.id] ?? {
-          'Foundation Office': editingBook.stock,
-          "Members' Bags": 0,
-          Bookstalls: 0,
-        }),
-        'Foundation Office': officeStock + difference,
-      },
-    }))
-
-    setBooks((current) =>
-      current.map((book) =>
-        book.id === editingBook.id
-          ? { ...book, title: newTitle.trim(), price, stock }
-          : book,
-      ),
-    )
-
-    // Keep the title in older transfer records as a historical snapshot.
-    resetForm()
   }
 
-  const handleDeleteBook = (book: Book) => {
-    if (window.confirm(`Delete "${book.title}" from the catalogue?`)) {
-      setBooks((current) => current.filter((item) => item.id !== book.id))
+  const handleDeleteBook = async (book: Book) => {
+    if (!window.confirm(`Deactivate "${book.title}" from the catalogue? Its history will be preserved.`)) {
+      return
+    }
 
-      setLocationStock((current) => {
-        const updated = { ...current }
-        delete updated[book.id]
-        return updated
+    try {
+      const response = await fetch(`${API_BASE_URL}/books/${book.id}`, {
+        method: 'DELETE',
       })
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.detail ?? 'The book could not be deactivated.')
+      }
+      await refreshBooksFromApi()
+      alert(result.message ?? 'Book deactivated.')
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to deactivate the book.')
     }
   }
 
@@ -273,22 +321,47 @@ function App() {
     book.title.toLowerCase().includes(search.toLowerCase()),
   )
 
-  const totalCopies = books.reduce(
-    (total, book) => total + totalAtLocations(locationStock[book.id]),
-    0,
-  )
+  const inventoryBooks = books.map((book) => {
+    const stockByLocation: Record<number, number> = {}
 
-  const lowStockBooks = books.filter(
-    (book) => totalAtLocations(locationStock[book.id]) < LOW_STOCK_LIMIT,
-  )
+    for (const location of locations) {
+      const matchingRow = inventoryRows.find(
+        (row) =>
+          row.book_id === book.id &&
+          row.location_id === location.id,
+      )
 
-  const filteredInventory = books.filter((book) =>
+      stockByLocation[location.id] = matchingRow?.current_stock ?? 0
+    }
+
+    const totalStock = Object.values(stockByLocation).reduce(
+      (total, quantity) => total + quantity,
+      0,
+    )
+
+    return {
+      id: book.id,
+      title: book.title,
+      stockByLocation,
+      totalStock,
+    }
+  })
+
+  const filteredInventory = inventoryBooks.filter((book) =>
     book.title.toLowerCase().includes(inventorySearch.toLowerCase()),
   )
 
-  const availableForTransfer = transferBookId
-    ? getLocationQuantity(Number(transferBookId), transferSource)
-    : 0
+  const liveLowStockBooks = inventoryBooks.filter(
+    (book) => book.totalStock < LOW_STOCK_LIMIT,
+  )
+
+  const inventoryTotalCopies = inventoryBooks.reduce(
+    (total, book) => total + book.totalStock,
+    0,
+  )
+
+  const totalCopies = inventoryTotalCopies
+
 
   const filteredTransfers = transfers.filter((transfer) =>
     [
@@ -300,79 +373,107 @@ function App() {
     ),
   )
 
-  const handleStockTransfer = () => {
-    const bookId = Number(transferBookId)
-    const quantity = Number(transferQuantity)
-    const book = books.find((item) => item.id === bookId)
+  const handleStockTransfer = async () => {
+  const bookId = Number(transferBookId)
+  const sourceId = Number(transferSource)
+  const destinationId = Number(transferDestination)
+  const quantity = Number(transferQuantity)
 
-    if (!book) {
-      alert('Please select a book.')
-      return
-    }
+  const book = books.find((item) => item.id === bookId)
 
-    if (transferSource === transferDestination) {
-      alert('Source and destination must be different.')
-      return
-    }
-
-    if (
-      transferQuantity.trim() === '' ||
-      !Number.isInteger(quantity) ||
-      quantity <= 0
-    ) {
-      alert('Enter a positive whole-number quantity.')
-      return
-    }
-
-    const sourceQuantity = getLocationQuantity(bookId, transferSource)
-
-    if (quantity > sourceQuantity) {
-      alert(
-        `Only ${sourceQuantity} copies of "${book.title}" are available at ${transferSource}.`,
-      )
-      return
-    }
-
-    const currentStock = locationStock[bookId] ?? {
-      'Foundation Office': book.stock,
-      "Members' Bags": 0,
-      Bookstalls: 0,
-    }
-
-    const updatedStock: LocationStock = {
-      ...currentStock,
-      [transferSource]: sourceQuantity - quantity,
-      [transferDestination]:
-        (currentStock[transferDestination] ?? 0) + quantity,
-    }
-
-    setLocationStock((current) => ({
-      ...current,
-      [bookId]: updatedStock,
-    }))
-
-    setBooks((current) =>
-      current.map((item) =>
-        item.id === bookId
-          ? { ...item, stock: totalAtLocations(updatedStock) }
-          : item,
-      ),
-    )
-
-    const newTransfer: StockTransfer = {
-      id: Date.now(),
-      bookId,
-      bookTitle: book.title,
-      quantity,
-      source: transferSource,
-      destination: transferDestination,
-      date: new Date().toLocaleString(),
-    }
-
-    setTransfers((current) => [newTransfer, ...current])
-    setTransferQuantity('')
-    alert('Stock transfer completed successfully.')
+  if (!book) {
+    alert('Please select a book.')
+    return
   }
+
+  if (
+    !locations.some((location) => location.id === sourceId) ||
+    !locations.some((location) => location.id === destinationId)
+  ) {
+    alert('Please select valid source and destination locations.')
+    return
+  }
+
+  if (sourceId === destinationId) {
+    alert('Source and destination must be different.')
+    return
+  }
+
+  if (
+    transferQuantity.trim() === '' ||
+    !Number.isInteger(quantity) ||
+    quantity <= 0
+  ) {
+    alert('Enter a positive whole-number quantity.')
+    return
+  }
+
+  const sourceStock = getLocationQuantity(bookId, sourceId)
+
+  if (sourceStock < 0 || quantity > sourceStock) {
+    alert(`Only ${sourceStock} copies of "${book.title}" are available at this source.`)
+    return
+  }
+
+  try {
+    // Record the transfer in PostgreSQL.
+    const response = await fetch(`${API_BASE_URL}/transfers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        book_id: bookId,
+        from_location_id: sourceId,
+        to_location_id: destinationId,
+        quantity,
+      }),
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.detail ?? 'The transfer could not be completed.')
+    }
+
+    // Refresh inventory from the backend.
+    const inventoryResponse = await fetch(`${API_BASE_URL}/inventory`)
+
+    if (!inventoryResponse.ok) {
+      throw new Error(
+        'Transfer recorded, but inventory refresh failed. Refresh the page.',
+      )
+    }
+
+    const inventoryData: { inventory: ApiInventoryRow[] } =
+      await inventoryResponse.json()
+
+    setInventoryRows(inventoryData.inventory)
+
+    // Refresh transfer history from the backend.
+    const transfersResponse = await fetch(`${API_BASE_URL}/transfers`)
+
+    if (!transfersResponse.ok) {
+      throw new Error(
+        'Transfer recorded, but history refresh failed. Refresh the page.',
+      )
+    }
+
+    const transfersData: { transfers: StockTransfer[] } =
+      await transfersResponse.json()
+
+    setTransfers(transfersData.transfers)
+    setTransferQuantity('')
+
+    alert('Stock transfer recorded successfully in the database.')
+  } catch (error) {
+    alert(
+      error instanceof Error
+        ? error.message
+        : 'Unable to complete the transfer.',
+    )
+  }
+}
 
   return (
     <div className="app">
@@ -452,6 +553,16 @@ function App() {
               </button>
             </div>
 
+
+            {booksLoading && <p>Loading books from the database...</p>}
+
+            {booksError && (
+              <p role="alert">
+                Could not load books: {booksError}
+              </p>
+            )}
+
+
             {(showAddBook || editingBook) && (
               <div className="add-book-form">
                 <h3>{editingBook ? 'Edit Book' : 'Add a New Book'}</h3>
@@ -470,15 +581,6 @@ function App() {
                   placeholder="Price (₹)"
                   value={newPrice}
                   onChange={(event) => setNewPrice(event.target.value)}
-                />
-
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="Stock quantity"
-                  value={newStock}
-                  onChange={(event) => setNewStock(event.target.value)}
                 />
 
                 <div className="form-actions">
@@ -518,7 +620,7 @@ function App() {
                       <td>₹{book.price.toFixed(2)}</td>
                       <td>
                         <span className="stock-badge">
-                          {totalAtLocations(locationStock[book.id])} books
+                          {inventoryBooks.find((item) => item.id === book.id)?.totalStock ?? 0} books
                         </span>
                       </td>
                       <td>
@@ -551,8 +653,7 @@ function App() {
             </div>
 
             <p className="sample-note">
-              Demo data only — prices and stock quantities are examples, not
-              live inventory figures.
+              Book details and stock totals are loaded from the backend database.
             </p>
           </section>
         ) : activePage === 'Inventory' ? (
@@ -562,42 +663,49 @@ function App() {
               <p>Monitor available stock and identify low-stock titles.</p>
             </div>
 
+            {inventoryLoading && <p>Loading inventory...</p>}
+
+            {inventoryError && (
+              <p role="alert">{inventoryError}</p>
+            )}
+
+
+
             <div className="inventory-summary">
               <div className="inventory-card">
                 <span>Total Titles</span>
-                <h2>{books.length}</h2>
+                <h2>{inventoryBooks.length}</h2>
                 <p>Books in your catalogue</p>
               </div>
               <div className="inventory-card">
                 <span>Total Copies</span>
-                <h2>{totalCopies}</h2>
+                <h2>{inventoryTotalCopies}</h2>
                 <p>Copies across all locations</p>
               </div>
               <div className="inventory-card low-stock-card">
                 <span>Low-Stock Titles</span>
-                <h2>{lowStockBooks.length}</h2>
+                <h2>{liveLowStockBooks.length}</h2>
                 <p>Titles with fewer than {LOW_STOCK_LIMIT} copies</p>
               </div>
             </div>
 
-            {lowStockBooks.length > 0 && (
+            {liveLowStockBooks.length > 0 && (
               <div className="stock-alert">
                 <strong>Low-stock alert</strong>
                 <p>
-                  {lowStockBooks.length} title(s) have fewer than{' '}
+                  {liveLowStockBooks.length} title(s) have fewer than{' '}
                   {LOW_STOCK_LIMIT} copies remaining.
                 </p>
                 <ul>
-                  {lowStockBooks.map((book) => (
+                  {liveLowStockBooks.map((book) => (
                     <li key={book.id}>
-                      {book.title} —{' '}
-                      {totalAtLocations(locationStock[book.id])} copies
-                      remaining
+                      {book.title} — {book.totalStock} copies remaining
                     </li>
                   ))}
                 </ul>
               </div>
             )}
+
 
             <section className="panel inventory-table-panel">
               <div className="inventory-toolbar">
@@ -619,9 +727,10 @@ function App() {
                   <thead>
                     <tr>
                       <th>BOOK TITLE</th>
-                      {LOCATIONS.map((location) => (
-                        <th key={location}>{location.toUpperCase()}</th>
+                      {locations.map((location) => (
+                        <th key={location.id}>{location.name.toUpperCase()}</th>
                       ))}
+
                       <th>TOTAL</th>
                     </tr>
                   </thead>
@@ -634,21 +743,22 @@ function App() {
                             <strong>{book.title}</strong>
                           </div>
                         </td>
-                        {LOCATIONS.map((location) => (
-                          <td key={location}>
-                            {getLocationQuantity(book.id, location)}
+                        {locations.map((location) => (
+                          <td key={location.id}>
+                            {book.stockByLocation[location.id] ?? 0}
                           </td>
                         ))}
+
                         <td>
                           <strong>
-                            {totalAtLocations(locationStock[book.id])}
+                            {book.totalStock}
                           </strong>
                         </td>
                       </tr>
                     ))}
                     {filteredInventory.length === 0 && (
                       <tr>
-                        <td colSpan={LOCATIONS.length + 2} className="empty-state">
+                        <td colSpan={locations.length + 2} className="empty-state">
                           No books match your search.
                         </td>
                       </tr>
@@ -657,8 +767,7 @@ function App() {
                 </table>
               </div>
               <p className="sample-note">
-                On first use, existing stock is assigned to Foundation Office.
-                Location-wise quantities are saved in this browser.
+                Stock quantities are calculated from the database transaction history.
               </p>
             </section>
           </section>
@@ -670,6 +779,12 @@ function App() {
                 <p>Move books between storage locations and track each transfer.</p>
               </div>
             </div>
+
+            {transfersLoading && <p>Loading transfers...</p>}
+
+            {transfersError && (
+              <p role="alert">{transfersError}</p>
+            )}
 
             <div className="transfer-summary">
               <div className="inventory-card">
@@ -686,7 +801,7 @@ function App() {
               </div>
               <div className="inventory-card">
                 <span>Locations</span>
-                <h2>{LOCATIONS.length}</h2>
+                <h2>{locations.length}</h2>
                 <p>Available locations</p>
               </div>
             </div>
@@ -719,11 +834,13 @@ function App() {
                     value={transferSource}
                     onChange={(event) => setTransferSource(event.target.value)}
                   >
-                    {LOCATIONS.map((location) => (
-                      <option key={location} value={location}>
-                        {location}
+
+                    {locations.map((location) => (
+                      <option key={location.id} value={String(location.id)}>
+                        {location.name}
                       </option>
                     ))}
+
                   </select>
                 </label>
 
@@ -735,9 +852,9 @@ function App() {
                       setTransferDestination(event.target.value)
                     }
                   >
-                    {LOCATIONS.map((location) => (
-                      <option key={location} value={location}>
-                        {location}
+                    {locations.map((location) => (
+                      <option key={location.id} value={String(location.id)}>
+                        {location.name}
                       </option>
                     ))}
                   </select>
@@ -936,8 +1053,7 @@ function App() {
                 <div className="note">
                   <strong>Getting started</strong>
                   <p>
-                    This dashboard currently uses browser data. A backend
-                    database can be connected later.
+                    Book catalogue, inventory, and transfers are connected to the backend database.
                   </p>
                 </div>
               </div>
